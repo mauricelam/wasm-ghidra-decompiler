@@ -24,7 +24,7 @@ OBJS=$(LIBDECOMP_NAMES:%=wasm_obj/%.o) wasm_obj/wasm_wrapper.o
 DIST_DIR=dist
 
 # Exported functions for JS access
-EXPORTED_FUNCTIONS=['_init_decompiler', '_decompile_pcode', '_detect_architecture', '_free_string', '_malloc', '_free']
+EXPORTED_FUNCTIONS=['_init_decompiler', '_decompile_pcode', '_get_symbols', '_detect_architecture', '_free_string', '_malloc', '_free']
 EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap', 'HEAPU8', 'UTF8ToString', 'stringToUTF8']
 
 wasm_obj/%.o: %.cc

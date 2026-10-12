@@ -54,12 +54,26 @@ def run():
             page.fill("#funcName", "0x1250")
             page.wait_for_timeout(500)
 
-            print("6. Clicking Run Decompiler...")
+            print("6. Clicking Get Symbols...")
+            page.click("#symbolsBtn")
+            page.wait_for_timeout(1000)
+
+            print("7. Checking symbols output status...")
+            for _ in range(30):
+                text = page.inner_text("#output")
+                if "Extracting symbols via WASM..." not in text:
+                    break
+                time.sleep(0.5)
+
+            symbols_output = page.inner_text("#output")
+            print("Current Symbols Output:")
+            print(symbols_output[:300])
+
+            print("8. Clicking Run Decompiler...")
             page.click("#decompileBtn")
             page.wait_for_timeout(1000)
 
-            print("7. Checking output status...")
-            # Wait up to 15 seconds for output to change from Calling WASM decompiler...
+            print("9. Checking decompilation output status...")
             for _ in range(30):
                 text = page.inner_text("#output")
                 if "Calling WASM decompiler..." not in text:
@@ -67,8 +81,8 @@ def run():
                 time.sleep(0.5)
 
             output_text = page.inner_text("#output")
-            print("Current Output:")
-            print(output_text)
+            print("Current Decompiler Output:")
+            print(output_text[:300])
 
             page.screenshot(path=screenshot_path)
             print(f"Screenshot saved to {screenshot_path}")

@@ -14,6 +14,7 @@
         pre { background: #f4f4f4; padding: 10px; border: 1px solid #ccc; overflow-x: auto; white-space: pre-wrap; }
         label { display: inline-block; width: 180px; }
         select { width: 300px; }
+        .button-group { display: flex; gap: 10px; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -48,7 +49,10 @@
             <p><small>Note: This example converts the binary to a simple XML image format for the bridge.</small></p>
         </div>
 
-        <button id="decompileBtn" disabled>Run Decompiler</button>
+        <div class="button-group">
+            <button id="decompileBtn" disabled>Run Decompiler</button>
+            <button id="symbolsBtn" disabled>Get Symbols</button>
+        </div>
 
         <h3>Output</h3>
         <pre id="output">Initializing WASM module...</pre>
