@@ -128,12 +128,95 @@ public:
     std::string getMessages() const { return messages.str(); }
 };
 
+static std::string escape_json_string(const std::string &s) {
+    std::ostringstream o;
+    for (char c : s) {
+        switch (c) {
+            case '"': o << "\\\""; break;
+            case '\\': o << "\\\\"; break;
+            case '\b': o << "\\b"; break;
+            case '\f': o << "\\f"; break;
+            case '\n': o << "\\n"; break;
+            case '\r': o << "\\r"; break;
+            case '\t': o << "\\t"; break;
+            default:
+                if ('\x00' <= c && c <= '\x1f') {
+                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
+                } else {
+                    o << c;
+                }
+        }
+    }
+    return o.str();
+}
+
 } // namespace ghidra
 
 extern "C" {
 
 void init_decompiler() {
     startDecompilerLibrary(NULL);
+}
+
+const char* get_symbols(const uint8_t* sla_data, int sla_size,
+                        const char* pspec_content, const char* cspec_content,
+                        const char* image_xml) {
+    if (!sla_data || sla_size <= 0) return strdup("[]");
+    if (!image_xml) return strdup("[]");
+
+    std::string json_result = "[";
+
+    try {
+        DocumentStorage store;
+        std::istringstream image_stream(image_xml);
+        Document *doc = store.parseDocument(image_stream);
+        store.registerTag(doc->getRoot());
+
+        WasmArchitecture glb("wasm_image", "default",
+                             sla_data, sla_size,
+                             pspec_content ? pspec_content : "",
+                             cspec_content ? cspec_content : "");
+        glb.init(store);
+
+        Scope *globalscope = glb.symboltab->getGlobalScope();
+        MapIterator miter = globalscope->begin();
+        MapIterator menditer = globalscope->end();
+        bool first = true;
+
+        while (miter != menditer) {
+            Symbol *sym = (*miter)->getSymbol();
+            FunctionSymbol *fsym = dynamic_cast<FunctionSymbol *>(sym);
+            ++miter;
+            if (fsym != NULL) {
+                Funcdata *fd = fsym->getFunction();
+                if (fd != NULL) {
+                    if (!first) {
+                        json_result += ",";
+                    }
+                    first = false;
+
+                    std::ostringstream addr_ss;
+                    addr_ss << "0x" << std::hex << fd->getAddress().getOffset();
+
+                    json_result += "{";
+                    json_result += "\"name\":\"" + escape_json_string(fd->getName()) + "\",";
+                    json_result += "\"address\":\"" + addr_ss.str() + "\",";
+                    json_result += "\"size\":" + std::to_string(fsym->getBytesConsumed());
+                    json_result += "}";
+                }
+            }
+        }
+    } catch (...) {
+        json_result = "[]";
+    }
+
+    if (json_result.back() != ']') {
+        json_result += "]";
+    }
+
+    char* cstr = (char*)malloc(json_result.size() + 1);
+    if (cstr) std::strcpy(cstr, json_result.c_str());
+    return cstr;
 }
 
 const char* decompile_pcode(const uint8_t* sla_data, int sla_size,

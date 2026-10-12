@@ -39,6 +39,7 @@ async function init() {
 
         output.textContent = 'Module ready. Please select a processor and a binary file.';
         document.getElementById('decompileBtn').disabled = false;
+        document.getElementById('symbolsBtn').disabled = false;
     } catch (e) {
         output.textContent = 'Error: ' + e.message;
         console.error(e);
@@ -112,7 +113,7 @@ function bytesToHex(bytes) {
     return hex.join('');
 }
 
-async function runDecompiler() {
+async function prepareInputs() {
     const output = document.getElementById('output');
     let procIdx = document.getElementById('processorSelect').value;
     let compIdx = document.getElementById('compilerSelect').value;
@@ -121,102 +122,139 @@ async function runDecompiler() {
     const pspecInput = document.getElementById('pspecInput').files[0];
     const cspecInput = document.getElementById('cspecInput').files[0];
     const binFile = document.getElementById('binInput').files[0];
-    const funcName = document.getElementById('funcName').value;
 
     if (!binFile) {
         alert('Please provide a binary file.');
-        return;
+        return null;
     }
 
     output.textContent = 'Reading binary image...';
-    try {
-        const binData = await readFileAsArrayBuffer(binFile);
+    const binData = await readFileAsArrayBuffer(binFile);
 
-        // Auto-detect architecture if none selected
-        if (procIdx === "" && !slaInput) {
-            output.textContent = 'Attempting auto-detection...';
-            const binPtr = decompilerModule._malloc(binData.length);
-            decompilerModule.HEAPU8.set(binData, binPtr);
-            const detectedId = decompilerModule.ccall('detect_architecture', 'string', ['number', 'number'], [binPtr, binData.length]);
-            decompilerModule._free(binPtr);
+    // Auto-detect architecture if none selected
+    if (procIdx === "" && !slaInput) {
+        output.textContent = 'Attempting auto-detection...';
+        const binPtr = decompilerModule._malloc(binData.length);
+        decompilerModule.HEAPU8.set(binData, binPtr);
+        const detectedId = decompilerModule.ccall('detect_architecture', 'string', ['number', 'number'], [binPtr, binData.length]);
+        decompilerModule._free(binPtr);
 
-            if (detectedId) {
-                const foundIdx = processors.findIndex(p => p.id === detectedId);
-                if (foundIdx !== -1) {
-                    document.getElementById('processorSelect').value = foundIdx;
-                    updateCompilers();
-                    procIdx = foundIdx;
-                    compIdx = 0;
-                    output.textContent = `Detected architecture: ${processors[foundIdx].description}`;
-                } else {
-                    output.textContent = `Detected ${detectedId} but it's not in processors.json`;
-                }
+        if (detectedId) {
+            const foundIdx = processors.findIndex(p => p.id === detectedId);
+            if (foundIdx !== -1) {
+                document.getElementById('processorSelect').value = foundIdx;
+                updateCompilers();
+                procIdx = foundIdx;
+                compIdx = 0;
+                output.textContent = `Detected architecture: ${processors[foundIdx].description}`;
             } else {
-                output.textContent = 'Auto-detection failed. Please select architecture manually.';
-                return;
+                output.textContent = `Detected ${detectedId} but it's not in processors.json`;
             }
+        } else {
+            output.textContent = 'Auto-detection failed. Please select architecture manually.';
+            return null;
         }
+    }
 
-        output.textContent = 'Preparing specifications...';
-        let slaData, pspecContent, cspecContent;
-        let archId = null;
+    output.textContent = 'Preparing specifications...';
+    let slaData, pspecContent, cspecContent;
+    let archId = null;
 
-        if (procIdx !== "") {
-            const proc = processors[procIdx];
-            const comp = proc.compilers[compIdx];
-            archId = proc.id;
-            output.textContent = `Fetching ${proc.id} specs...`;
-            [slaData, pspecContent, cspecContent] = await Promise.all([
-                fetchFileAsArrayBuffer(proc.sla),
-                fetchFileAsText(proc.pspec),
-                fetchFileAsText(comp.spec)
-            ]);
-        }
+    if (procIdx !== "") {
+        const proc = processors[procIdx];
+        const comp = proc.compilers[compIdx];
+        archId = proc.id;
+        output.textContent = `Fetching ${proc.id} specs...`;
+        [slaData, pspecContent, cspecContent] = await Promise.all([
+            fetchFileAsArrayBuffer(proc.sla),
+            fetchFileAsText(proc.pspec),
+            fetchFileAsText(comp.spec)
+        ]);
+    }
 
-        // Override with custom files if provided
-        if (slaInput) slaData = await readFileAsArrayBuffer(slaInput);
-        if (pspecInput) pspecContent = await readFileAsText(pspecInput);
-        if (cspecInput) cspecContent = await readFileAsText(cspecInput);
+    // Override with custom files if provided
+    if (slaInput) slaData = await readFileAsArrayBuffer(slaInput);
+    if (pspecInput) pspecContent = await readFileAsText(pspecInput);
+    if (cspecInput) cspecContent = await readFileAsText(cspecInput);
 
-        if (!slaData || !pspecContent || !cspecContent) {
-            alert('Missing SLEIGH, PSPEC or CSPEC. Please select a processor or upload custom files.');
-            return;
-        }
+    if (!slaData || !pspecContent || !cspecContent) {
+        alert('Missing SLEIGH, PSPEC or CSPEC. Please select a processor or upload custom files.');
+        return null;
+    }
 
-        const baseAddr = document.getElementById('baseAddr').value || "0x0";
-        const imageXml = `
+    const baseAddr = document.getElementById('baseAddr').value || "0x0";
+    const imageXml = `
 <binaryimage arch="${archId}">
   <bytechunk space="ram" offset="${baseAddr}">
     ${bytesToHex(binData)}
   </bytechunk>
 </binaryimage>`;
 
-        output.textContent = 'Calling WASM decompiler...';
+    return { slaData, pspecContent, cspecContent, imageXml };
+}
 
-        // Copy binary SLA data to WASM heap
-        const slaPtr = decompilerModule._malloc(slaData.length);
-        decompilerModule.HEAPU8.set(slaData, slaPtr);
+async function runDecompiler() {
+    const output = document.getElementById('output');
+    const inputs = await prepareInputs();
+    if (!inputs) return;
 
+    const { slaData, pspecContent, cspecContent, imageXml } = inputs;
+    const funcName = document.getElementById('funcName').value;
+
+    output.textContent = 'Calling WASM decompiler...';
+
+    const slaPtr = decompilerModule._malloc(slaData.length);
+    decompilerModule.HEAPU8.set(slaData, slaPtr);
+
+    try {
+        const resultPtr = decompilerModule.ccall(
+            'decompile_pcode',
+            'number',
+            ['number', 'number', 'string', 'string', 'string', 'string'],
+            [slaPtr, slaData.length, pspecContent, cspecContent, imageXml, funcName]
+        );
+
+        const result = decompilerModule.UTF8ToString(resultPtr);
+        output.textContent = result;
+        decompilerModule._free_string(resultPtr);
+    } finally {
+        decompilerModule._free(slaPtr);
+    }
+}
+
+async function runGetSymbols() {
+    const output = document.getElementById('output');
+    const inputs = await prepareInputs();
+    if (!inputs) return;
+
+    const { slaData, pspecContent, cspecContent, imageXml } = inputs;
+
+    output.textContent = 'Extracting symbols via WASM...';
+
+    const slaPtr = decompilerModule._malloc(slaData.length);
+    decompilerModule.HEAPU8.set(slaData, slaPtr);
+
+    try {
+        const resultPtr = decompilerModule.ccall(
+            'get_symbols',
+            'number',
+            ['number', 'number', 'string', 'string', 'string'],
+            [slaPtr, slaData.length, pspecContent, cspecContent, imageXml]
+        );
+
+        const result = decompilerModule.UTF8ToString(resultPtr);
         try {
-            // Call the bridge function
-            const resultPtr = decompilerModule.ccall(
-                'decompile_pcode',
-                'number',
-                ['number', 'number', 'string', 'string', 'string', 'string'],
-                [slaPtr, slaData.length, pspecContent, cspecContent, imageXml, funcName]
-            );
-
-            const result = decompilerModule.UTF8ToString(resultPtr);
+            const jsonParsed = JSON.parse(result);
+            output.textContent = JSON.stringify(jsonParsed, null, 2);
+        } catch (e) {
             output.textContent = result;
-            decompilerModule._free_string(resultPtr);
-        } finally {
-            decompilerModule._free(slaPtr);
         }
-    } catch (e) {
-        output.textContent = 'Error during decompilation: ' + e.message;
-        console.error("ERROR", e);
+        decompilerModule._free_string(resultPtr);
+    } finally {
+        decompilerModule._free(slaPtr);
     }
 }
 
 document.getElementById('decompileBtn').addEventListener('click', runDecompiler);
+document.getElementById('symbolsBtn').addEventListener('click', runGetSymbols);
 window.addEventListener('load', init);
